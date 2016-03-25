@@ -1,0 +1,5 @@
+*.swp
+lib/*
+!lib/.gitignore
+config
+config.ini
