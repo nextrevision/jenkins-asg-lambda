@@ -1,0 +1,81 @@
+[DEFAULT]
+# boolean to determine whether or not to query credstash
+# to get authentication information
+use_credstash = True
+
+# when a new instance is created, call a job to perform an
+# action with the new instance
+call_create_job = True
+
+# when an existing intance is terminated, call a job to
+# perform an action with the new instance
+call_terminate_job = True
+
+[credstash]
+# credstash dynamodb table name
+table = credential-store
+
+# name of the key in the dynamodb table that contains
+# the username to authenticate to the Jenkins server
+jenkins_username_key = lambda_jenkins_username
+
+# name of the key in the dynamodb table that contains
+# the api_key used to authenticate the user
+jenkins_user_token_key = lambda_jenkins_token
+
+# name of the key in the dynamodb table that contains
+# the job api token for the create job
+jenkins_create_job_token_key = lambda_jenkins_create_job_token
+
+# name of the key in the dynamodb table that contains
+# the job api token for the terminate job
+jenkins_terminate_job_token_key = lambda_jenkins_terminate_job_token
+
+[jenkins]
+# url of the jenkins host
+url = http://jenkins.acme.com
+
+# verify the validity of the ssl certificate
+verify_ssl = True
+
+# username to authenticate to jenkins with (only when
+# use_credstash is set to False)
+#username = admin
+
+# api_key to authenticate to jenkins with (only when
+# use_credstash is set to False)
+#api_key = 0123456789
+
+# job to call when a new instance is created by the asg
+create_job = asg-register-instance
+
+# token to use to authenticate to the create job
+# (only when use_credstash is set to False)
+create_job_token = 0123456789
+
+# parameters to pass to the jenkins job
+# params can be interpolated by using '%(var)s' syntax where 'var' is
+# information about the instance and can be one of:
+#   id               - ec2 id of the instance
+#   public_hostname  - hostname assigned to the instance
+#   public_ip        - the public ip of the instance
+#   private_hostname - hostname assigned to the instance
+#   private_ip       - the private ip of the instance
+create_job_params = TARGET=%(private_ip)s
+
+# job to call when an instance is terminated by the asg
+terminate_job = asg-deregister-instance
+
+# token to use to authenticate to the terminate job
+# (only when use_credstash is set to False)
+terminate_job_token = 0123456789
+
+# parameters to pass to the jenkins job
+# params can be interpolated by using '%(var)s' syntax where 'var' is
+# information about the instance and can be one of:
+#   id               - ec2 id of the instance
+#   public_hostname  - hostname assigned to the instance
+#   public_ip        - the public ip of the instance
+#   private_hostname - hostname assigned to the instance
+#   private_ip       - the private ip of the instance
+terminate_job_params = TARGET=%(private_ip)s
