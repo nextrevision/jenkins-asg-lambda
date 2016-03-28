@@ -14,10 +14,12 @@ ec2_resource = boto3.resource('ec2')
 
 def handler(event, context):
     message = json.loads(event['Records'][0]['Sns']['Message'])
-    metadata = json.loads(message['NotificationMetadata'])
+    metadata = {}
+    if 'NotificationMetadata' in message.keys():
+        metadata = json.loads(message['NotificationMetadata'])
     print("DEBUG: Event\n%s" % json.dumps(event))
     print("DEBUG: Message\n%s" % json.dumps(message))
-    print("DEBUG Metadata\n%s" % json.dumps(metadata))
+    print("DEBUG: Metadata\n%s" % json.dumps(metadata))
 
     instance = ec2_resource.Instance(message['EC2InstanceId'])
     instance_metadata = {
@@ -61,10 +63,10 @@ def run_jenkins_job(job, params, token, settings):
     job_url = "%s/job/%s/buildWithParameters?token=%s&%s&cause=Lambda+ASG+Scale" % (
             settings['url'], job, token, params)
 
-    crumb_response = requests.get(crumb_url, auth=auth)
+    crumb_response = requests.get(crumb_url, auth=auth, verify=settings['verify_ssl'])
     crumb = crumb_response.text.split(':')
 
-    job_response = requests.post(job_url, auth=auth, data={}, headers={crumb[0]: crumb[1]})
+    job_response = requests.post(job_url, auth=auth, data={}, headers={crumb[0]: crumb[1]}, verify=settings['verify_ssl'])
     if re.match('^2[0-9]{2}$', job_response.status_code) is None:
         print("Reponse from job %s was not 2xx: %s" % (job, job_response.status_code))
         sys.exit(1)
@@ -98,14 +100,14 @@ def read_config(config_file, instance_metadata):
         credstash_table = config.get('credstash', 'table')
         credstash_jenkins_username_key = config.get('credstash', 'jenkins_username_key')
         credstash_jenkins_user_api_key = config.get('credstash', 'jenkins_user_token_key')
-        credstash_jenkins_create_job_token_key = config.get('credstash', 'jenkins_create_job_token_key')
-        credstash_jenkins_terminate_job_token_key = config.get('credstash', 'jenkins_terminate_job_token_key')
         # populate jenkins settings from credstash
         settings['username'] = credstash.getSecret(credstash_jenkins_username_key, table=credstash_table)
         settings['api_key'] = credstash.getSecret(credstash_jenkins_user_api_key, table=credstash_table)
         if call_create_job:
+            credstash_jenkins_create_job_token_key = config.get('credstash', 'jenkins_create_job_token_key')
             settings['create_job_token'] = credstash.getSecret(credstash_jenkins_create_job_token_key, table=credstash_table)
         if call_terminate_job:
+            credstash_jenkins_terminate_job_token_key = config.get('credstash', 'jenkins_terminate_job_token_key')
             settings['terminate_job_token'] = credstash.getSecret(credstash_jenkins_terminate_job_token_key, table=credstash_table)
     else:
         settings['username'] = config.get('jenkins', 'username')
