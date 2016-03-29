@@ -1,5 +1,7 @@
 *.swp
+*.zip
 lib/*
 !lib/.gitignore
 config
 config.ini
+.venv
