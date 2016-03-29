@@ -27,9 +27,14 @@ def handler(event, context):
     print("DEBUG: Message\n%s" % json.dumps(message))
     print("DEBUG: Metadata\n%s" % json.dumps(metadata))
     transition = message['LifecycleTransition']
+    instance_id = message['EC2InstanceId']
+
+    # set instance name
+    name_prefix = metadata['name_prefix']
+    set_instance_name(instance_id, "%s%s" % (instance_id[2:], name_prefix))
 
     # build instance metadata to support parameter interpolation
-    instance_metadata = get_instance_metadata(message['EC2InstanceId'])
+    instance_metadata = get_instance_metadata(instance_id)
     print("DEBUG: Instance Information\n%s" % json.dumps(instance_metadata))
 
     # determine the config file to use from either a local file or one
@@ -70,6 +75,17 @@ def handler(event, context):
         InstanceId=instance_metadata['id']
     )
     print("ASG action complete:\n %s" % response)
+
+
+def set_instance_name(instance_id, name):
+    ec2 = boto3.client('ec2')
+    tag = {'Key': 'Name', 'Value': name}
+    response = ec2.create_tags(Resources=[instance_id], Tags=[tag])
+    status_code = response['ResponseMetadata']['HTTPStatusCode']
+    if status_code != 200:
+        print("Reponse from ec2 name update: %s" % status_code)
+        print(json.dumps(response))
+        sys.exit(1)
 
 
 # returns the message and metadata from an event object
