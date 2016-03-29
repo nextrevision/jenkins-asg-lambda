@@ -11,6 +11,7 @@ import requests
 # asg lifecycle actions
 LAUNCH_STR = 'autoscaling:EC2_INSTANCE_LAUNCHING'
 TERMINATE_STR = 'autoscaling:EC2_INSTANCE_TERMINATING'
+TEST_STR = 'autoscaling:TEST_NOTIFICATION'
 
 # aws clients and resources
 asg_client = boto3.client('autoscaling')
@@ -26,12 +27,17 @@ def handler(event, context):
     message, metadata = parse_event(event)
     print("DEBUG: Message\n%s" % json.dumps(message))
     print("DEBUG: Metadata\n%s" % json.dumps(metadata))
+
+    if 'Event' in message.keys() and message['Event'] == TEST_STR:
+        print('DEBUG: Received test string, doing nothing.')
+        sys.exit(0)
+
     transition = message['LifecycleTransition']
     instance_id = message['EC2InstanceId']
 
     # set instance name
     name_prefix = metadata['name_prefix']
-    set_instance_name(instance_id, "%s%s" % (instance_id[2:], name_prefix))
+    set_instance_name(instance_id, "%s%s" % (name_prefix, instance_id[2:]))
 
     # build instance metadata to support parameter interpolation
     instance_metadata = get_instance_metadata(instance_id)
@@ -103,6 +109,7 @@ def get_instance_metadata(instance_id):
 
     metadata = {
         "id": instance.instance_id,
+        "hostname": instance.private_dns_name.split('.')[0],
         "private_hostname": instance.private_dns_name,
         "private_ip": instance.private_ip_address,
         "public_hostname": instance.public_dns_name,
