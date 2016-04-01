@@ -61,6 +61,9 @@ create_job_token = 0123456789
 #   public_ip        - the public ip of the instance
 #   private_hostname - hostname assigned to the instance
 #   private_ip       - the private ip of the instance
+#
+#   any tags assigned to the instance can be accessed by using the
+#   tag's key.
 create_job_params = TARGET=%(private_ip)s
 
 # job to call when an instance is terminated by the asg
@@ -78,4 +81,7 @@ terminate_job_token = 0123456789
 #   public_ip        - the public ip of the instance
 #   private_hostname - hostname assigned to the instance
 #   private_ip       - the private ip of the instance
+#
+#   any tags assigned to the instance can be accessed by using the
+#   tag's key.
 terminate_job_params = TARGET=%(private_ip)s
