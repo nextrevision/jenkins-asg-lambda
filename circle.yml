@@ -1,0 +1,5 @@
+test:
+  override:
+    - pip install --upgrade -r requirements.txt
+    - cd ${VIRTUAL_ENV}/lib/python2.7/site-packages/ && zip -r9 $CIRCLE_ARTIFACTS/jenkins-asg-lambda.zip *
+    - zip -g $CIRCLE_ARTIFACTS/jenkins-asg-lambda.zip /home/ubuntu/jenkins-asg-lambda/JenkinsJob.py
