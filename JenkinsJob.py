@@ -166,7 +166,7 @@ def run_jenkins_job(job, params, token, settings):
                              verify=settings['verify_ssl'])
     # if we dont get a 2xx response, display the code and dump the response
     if re.match('^2[0-9]{2}$', str(response.status_code)) is None:
-        print("Reponse from job was not 2xx: %s" % (job, response.status_code))
+        print("Reponse from job %s was not 2xx: %d" % (job, response.status_code))
         print(response.text)
         sys.exit(1)
 
