@@ -1,4 +1,6 @@
 from __future__ import print_function
+from os import path
+
 import json
 import re
 import sys
@@ -128,7 +130,8 @@ def get_instance_metadata(instance_id):
 def get_config_file(metadata):
     config_file = 'config.ini'
     if 's3_config_file' in metadata.keys():
-        config_file = "/tmp/%s" % metadata['s3_config_file']
+        config_base_name = path.basename(metadata['s3_config_file'])
+        config_file = "/tmp/%s" % config_base_name
         s3_client.download_file(metadata['s3_bucket'],
                                 metadata['s3_config_file'],
                                 config_file)
