@@ -144,21 +144,22 @@ def run_jenkins_job(job, params, token, settings):
     job_params = "token=%s&%s&cause=Lambda+ASG+Scale" % (token, params)
     auth = (settings['username'], settings['api_key'])
 
-    # for most jenkins setups, we need a CSRF crumb to subsequently call the
-    # jenkins api to trigger a job
-    print("DEBUG: Getting CSRF crumb")
-    response = requests.get("%s/crumbIssuer/api/json" % settings['url'],
-                            auth=auth,
-                            timeout=5,
-                            verify=settings['verify_ssl'])
-    # if we dont get a 2xx response, display the code and dump the response
-    if re.match('^2[0-9]{2}$', str(response.status_code)) is None:
-        print("Reponse from crumb was not 2xx: %s" % response.status_code)
-        print(response.text)
-        sys.exit(1)
+    if settings['csrf_enabled']:
+        # for most jenkins setups, we need a CSRF crumb to subsequently call the
+        # jenkins api to trigger a job
+        print("DEBUG: Getting CSRF crumb")
+        response = requests.get("%s/crumbIssuer/api/json" % settings['url'],
+                                auth=auth,
+                                timeout=5,
+                                verify=settings['verify_ssl'])
+        # if we dont get a 2xx response, display the code and dump the response
+        if re.match('^2[0-9]{2}$', str(response.status_code)) is None:
+            print("Reponse from crumb was not 2xx: %s" % response.status_code)
+            print(response.text)
+            sys.exit(1)
 
-    crumb = json.loads(response.text)
-    headers = {crumb['crumbRequestField']: crumb['crumb']}
+        crumb = json.loads(response.text)
+        headers = {crumb['crumbRequestField']: crumb['crumb']}
 
     # call the jenkins job api with the supplied parameters
     response = requests.post("%s?%s" % (job_url, job_params),
@@ -191,6 +192,7 @@ def read_config(config_file, instance_metadata):
     # get jenkins settings
     settings['url'] = config.get('jenkins', 'url')
     settings['verify_ssl'] = config.getboolean('jenkins', 'verify_ssl')
+    settings['csrf_enabled'] = config.getboolean('jenkins', 'csrf_enabled')
 
     if settings['call_create_job']:
         settings['create_job'] = config.get('jenkins', 'create_job')
