@@ -1,4 +1,6 @@
 from __future__ import print_function
+from os import path
+
 import json
 import re
 import sys
@@ -11,6 +13,7 @@ import requests
 # asg lifecycle actions
 LAUNCH_STR = 'autoscaling:EC2_INSTANCE_LAUNCHING'
 TERMINATE_STR = 'autoscaling:EC2_INSTANCE_TERMINATING'
+TEST_STR = 'autoscaling:TEST_NOTIFICATION'
 
 # aws clients and resources
 asg_client = boto3.client('autoscaling')
@@ -26,10 +29,20 @@ def handler(event, context):
     message, metadata = parse_event(event)
     print("DEBUG: Message\n%s" % json.dumps(message))
     print("DEBUG: Metadata\n%s" % json.dumps(metadata))
+
+    if 'Event' in message.keys() and message['Event'] == TEST_STR:
+        print('DEBUG: Received test string, doing nothing.')
+        sys.exit(0)
+
     transition = message['LifecycleTransition']
+    instance_id = message['EC2InstanceId']
+
+    # set instance name
+    name_prefix = metadata['name_prefix']
+    set_instance_name(instance_id, "%s%s" % (name_prefix, instance_id[2:]))
 
     # build instance metadata to support parameter interpolation
-    instance_metadata = get_instance_metadata(message['EC2InstanceId'])
+    instance_metadata = get_instance_metadata(instance_id)
     print("DEBUG: Instance Information\n%s" % json.dumps(instance_metadata))
 
     # determine the config file to use from either a local file or one
@@ -72,6 +85,17 @@ def handler(event, context):
     print("ASG action complete:\n %s" % response)
 
 
+def set_instance_name(instance_id, name):
+    ec2 = boto3.client('ec2')
+    tag = {'Key': 'Name', 'Value': name}
+    response = ec2.create_tags(Resources=[instance_id], Tags=[tag])
+    status_code = response['ResponseMetadata']['HTTPStatusCode']
+    if status_code != 200:
+        print("Reponse from ec2 name update: %s" % status_code)
+        print(json.dumps(response))
+        sys.exit(1)
+
+
 # returns the message and metadata from an event object
 def parse_event(event):
     metadata = {}
@@ -87,6 +111,7 @@ def get_instance_metadata(instance_id):
 
     metadata = {
         "id": instance.instance_id,
+        "hostname": instance.private_dns_name.split('.')[0],
         "private_hostname": instance.private_dns_name,
         "private_ip": instance.private_ip_address,
         "public_hostname": instance.public_dns_name,
@@ -105,7 +130,8 @@ def get_instance_metadata(instance_id):
 def get_config_file(metadata):
     config_file = 'config.ini'
     if 's3_config_file' in metadata.keys():
-        config_file = "/tmp/%s" % metadata['s3_config_file']
+        config_base_name = path.basename(metadata['s3_config_file'])
+        config_file = "/tmp/%s" % config_base_name
         s3_client.download_file(metadata['s3_bucket'],
                                 metadata['s3_config_file'],
                                 config_file)
@@ -118,21 +144,22 @@ def run_jenkins_job(job, params, token, settings):
     job_params = "token=%s&%s&cause=Lambda+ASG+Scale" % (token, params)
     auth = (settings['username'], settings['api_key'])
 
-    # for most jenkins setups, we need a CSRF crumb to subsequently call the
-    # jenkins api to trigger a job
-    print("DEBUG: Getting CSRF crumb")
-    response = requests.get("%s/crumbIssuer/api/json" % settings['url'],
-                            auth=auth,
-                            timeout=5,
-                            verify=settings['verify_ssl'])
-    # if we dont get a 2xx response, display the code and dump the response
-    if re.match('^2[0-9]{2}$', str(response.status_code)) is None:
-        print("Reponse from crumb was not 2xx: %s" % response.status_code)
-        print(response.text)
-        sys.exit(1)
+    if settings['csrf_enabled']:
+        # for most jenkins setups, we need a CSRF crumb to subsequently call the
+        # jenkins api to trigger a job
+        print("DEBUG: Getting CSRF crumb")
+        response = requests.get("%s/crumbIssuer/api/json" % settings['url'],
+                                auth=auth,
+                                timeout=5,
+                                verify=settings['verify_ssl'])
+        # if we dont get a 2xx response, display the code and dump the response
+        if re.match('^2[0-9]{2}$', str(response.status_code)) is None:
+            print("Reponse from crumb was not 2xx: %s" % response.status_code)
+            print(response.text)
+            sys.exit(1)
 
-    crumb = json.loads(response.text)
-    headers = {crumb['crumbRequestField']: crumb['crumb']}
+        crumb = json.loads(response.text)
+        headers = {crumb['crumbRequestField']: crumb['crumb']}
 
     # call the jenkins job api with the supplied parameters
     response = requests.post("%s?%s" % (job_url, job_params),
@@ -143,7 +170,7 @@ def run_jenkins_job(job, params, token, settings):
                              verify=settings['verify_ssl'])
     # if we dont get a 2xx response, display the code and dump the response
     if re.match('^2[0-9]{2}$', str(response.status_code)) is None:
-        print("Reponse from job was not 2xx: %s" % (job, response.status_code))
+        print("Reponse from job %s was not 2xx: %d" % (job, response.status_code))
         print(response.text)
         sys.exit(1)
 
@@ -165,6 +192,7 @@ def read_config(config_file, instance_metadata):
     # get jenkins settings
     settings['url'] = config.get('jenkins', 'url')
     settings['verify_ssl'] = config.getboolean('jenkins', 'verify_ssl')
+    settings['csrf_enabled'] = config.getboolean('jenkins', 'csrf_enabled')
 
     if settings['call_create_job']:
         settings['create_job'] = config.get('jenkins', 'create_job')
