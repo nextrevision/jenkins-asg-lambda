@@ -38,6 +38,9 @@ url = http://jenkins.acme.com
 # verify the validity of the ssl certificate
 verify_ssl = True
 
+# csrf enabled?
+csrf_enabled = False
+
 # username to authenticate to jenkins with (only when
 # use_credstash is set to False)
 #username = admin
