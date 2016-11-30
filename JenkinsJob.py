@@ -66,15 +66,15 @@ def handler(event, context):
         # load the config file
         settings = read_config(config_file, instance_metadata)
     except:
-        print("DEBUG: Error retreiving config from s3")
+        print("FATAL: Error retreiving config from s3")
         finish(message, instance_metadata, False)
 
     # Run defined Jenkins job for transition
-    code = 0
+    code = 200
 
     # run on instance launch and when the user has call_create_job set to true
     if transition == LAUNCH_STR and settings['call_create_job']:
-        print("Calling create job %s/job/%s" % (settings['url'],
+        print("DEBUG: Calling create job %s/job/%s" % (settings['url'],
                                                 settings['create_job']))
 
         code = run_jenkins_job(settings['create_job'],
@@ -85,7 +85,7 @@ def handler(event, context):
     # run on instance terminate and when the user has call_terminate_job set
     # to true
     elif transition == TERMINATE_STR and settings['call_terminate_job']:
-        print("Calling terminate job %s/job/%s" % (settings['url'],
+        print("DEBUG: Calling terminate job %s/job/%s" % (settings['url'],
                                                    settings['terminate_job']))
         code = run_jenkins_job(settings['terminate_job'],
                         settings['terminate_job_params'],
