@@ -21,6 +21,11 @@ asg_client = boto3.client('autoscaling')
 s3_client = boto3.client('s3')
 ec2_resource = boto3.resource('ec2')
 
+# setup logging
+# http://docs.aws.amazon.com/lambda/latest/dg/python-logging.html
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+
 def finish(message, success=True):
     result = 'CONTINUE' if success else 'ABANDON'
 
@@ -36,8 +41,6 @@ def finish(message, success=True):
 
 # main entrypoint for lambda function
 def handler(event, context):
-    logging.basicConfig(level=logging.DEBUG)
-
     # parse the message and metadata out of the event
     message, metadata = parse_event(event)
 
@@ -53,7 +56,7 @@ def handler(event, context):
     instance_id = message['EC2InstanceId']
     name_prefix = metadata['name_prefix']
 
-    logging.info("DEBUG: Received %s for %s" % (transition, instance_id))
+    logger.info("Received %s for %s", transition, instance_id)
 
     # set instance name
     set_instance_name(instance_id, "%s%s" % (name_prefix, instance_id[2:]))
