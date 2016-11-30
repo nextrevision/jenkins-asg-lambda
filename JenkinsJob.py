@@ -75,7 +75,8 @@ def handler(event, context):
         # load the config file
         settings = read_config(config_file, instance_metadata)
     except:
-        print("[FATAL] Error retreiving config from s3")
+        e = sys.exc_info()[0]
+        print("[FATAL] Error retreiving config from s3: %s" % e)
         finish(message, False)
 
     # run on instance launch and when the user has call_create_job set to true
