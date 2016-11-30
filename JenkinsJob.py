@@ -2,7 +2,6 @@ from __future__ import print_function
 from os import path
 
 import json
-import logging
 import re
 import sys
 import ConfigParser
@@ -21,11 +20,6 @@ asg_client = boto3.client('autoscaling')
 s3_client = boto3.client('s3')
 ec2_resource = boto3.resource('ec2')
 
-# setup logging
-# http://docs.aws.amazon.com/lambda/latest/dg/python-logging.html
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
-
 def finish(message, success=True):
     result = 'CONTINUE' if success else 'ABANDON'
 
@@ -36,7 +30,7 @@ def finish(message, success=True):
         LifecycleActionResult=result,
         InstanceId=message['EC2InstanceId']
     )
-    print("DEBUG: ASG action %s: [%s]" % (result, response['ResponseMetadata']['HTTPStatusCode']))
+    print("[DEBUG] ASG action %s: [%s]" % (result, response['ResponseMetadata']['HTTPStatusCode']))
     sys.exit(0)
 
 # main entrypoint for lambda function
@@ -45,7 +39,7 @@ def handler(event, context):
     message, metadata = parse_event(event)
 
     if 'Event' in message.keys() and message['Event'] == TEST_STR:
-        print('DEBUG: Ignoring test notification.')
+        print("[DEBUG] Ignoring test notification.")
         sys.exit(0)
 
     #print("DEBUG: Received Event\n%s" % json.dumps(event))
@@ -56,50 +50,57 @@ def handler(event, context):
     instance_id = message['EC2InstanceId']
     name_prefix = metadata['name_prefix']
 
-    logger.info("Received %s for %s", transition, instance_id)
-
-    # set instance name
-    set_instance_name(instance_id, "%s%s" % (name_prefix, instance_id[2:]))
+    print("[DEBUG] Received %s for %s" % (transition, instance_id))
 
     # build instance metadata to support parameter interpolation
     instance_metadata = get_instance_metadata(instance_id)
-    print("DEBUG: Instance Information\n%s" % json.dumps(instance_metadata))
+    print("[DEBUG] Instance Information\n%s" % json.dumps(instance_metadata))
+
+    # Below this line we are calling external resources.
+    # All function calls should be wrapped in try/except to trigger ABANDON
+    # If no errors are encountered, we CONTINUE
+
+    # Update EC2 Instance Name Tag based on Prefix and Instance-Id
+    try:
+        set_instance_name(instance_id, "%s%s" % (name_prefix, instance_id[2:]))
+    except ValueError:
+        finish(message, False)
 
     # determine the config file to use from either a local file or one
     # downloaded from an s3 bucket
     try:
         config_file = get_config_file(metadata)
-        print("DEBUG: Reading settings from %s" % config_file)
+        print("[DEBUG] Reading settings from %s" % config_file)
 
         # load the config file
         settings = read_config(config_file, instance_metadata)
     except:
-        print("FATAL: Error retreiving config from s3")
+        print("[FATAL] Error retreiving config from s3")
         finish(message, False)
 
     # run on instance launch and when the user has call_create_job set to true
     if transition == LAUNCH_STR and settings['call_create_job']:
-        print("DEBUG: Calling create job %s/job/%s" % (settings['url'],
-                                                settings['create_job']))
+        print("[DEBUG] Calling create job %s/job/%s" % (settings['url'],
+                                                        settings['create_job']))
 
         try:
             run_jenkins_job(settings['create_job'],
-                        settings['create_job_params'],
-                        settings['create_job_token'],
-                        settings)
+                            settings['create_job_params'],
+                            settings['create_job_token'],
+                            settings)
         except ValueError:
             finish(message, False)
 
     # run on instance terminate and when the user has call_terminate_job set
     # to true
     elif transition == TERMINATE_STR and settings['call_terminate_job']:
-        print("DEBUG: Calling terminate job %s/job/%s" % (settings['url'],
-                                                   settings['terminate_job']))
+        print("[DEBUG] Calling terminate job %s/job/%s" % (settings['url'],
+                                                           settings['terminate_job']))
         try:
             run_jenkins_job(settings['terminate_job'],
-                        settings['terminate_job_params'],
-                        settings['terminate_job_token'],
-                        settings)
+                            settings['terminate_job_params'],
+                            settings['terminate_job_token'],
+                            settings)
         except ValueError:
             finish(message, False)
 
@@ -113,9 +114,9 @@ def set_instance_name(instance_id, name):
     response = ec2.create_tags(Resources=[instance_id], Tags=[tag])
     status_code = response['ResponseMetadata']['HTTPStatusCode']
     if status_code != 200:
-        print("Reponse from ec2 name update: %s" % status_code)
+        print("[DEBUG] Reponse from ec2 name update: %s" % status_code)
         print(json.dumps(response))
-        sys.exit(1)
+        raise ValueError("Response from Instance Name Update was not 2xx")
 
 
 # returns the message and metadata from an event object
