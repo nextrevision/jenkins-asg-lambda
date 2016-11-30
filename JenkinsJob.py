@@ -20,7 +20,7 @@ asg_client = boto3.client('autoscaling')
 s3_client = boto3.client('s3')
 ec2_resource = boto3.resource('ec2')
 
-def finish(message, instance_metadata, success=True):
+def finish(message, success=True):
     result = 'CONTINUE' if success else 'ABANDON'
 
     response = asg_client.complete_lifecycle_action(
@@ -28,7 +28,7 @@ def finish(message, instance_metadata, success=True):
         AutoScalingGroupName=message['AutoScalingGroupName'],
         LifecycleActionToken=message['LifecycleActionToken'],
         LifecycleActionResult=result,
-        InstanceId=instance_metadata['id']
+        InstanceId=message['EC2InstanceId']
     )
     print("DEBUG: ASG action %s: [%s]" % (result, response['ResponseMetadata']['HTTPStatusCode']))
     sys.exit(0)
@@ -42,15 +42,17 @@ def handler(event, context):
         print('DEBUG: Ignoring test notification.')
         sys.exit(0)
 
-    print("DEBUG: Received Event\n%s" % json.dumps(event))
+    #print("DEBUG: Received Event\n%s" % json.dumps(event))
     #print("DEBUG: Message\n%s" % json.dumps(message))
     #print("DEBUG: Metadata\n%s" % json.dumps(metadata))
 
     transition = message['LifecycleTransition']
     instance_id = message['EC2InstanceId']
+    name_prefix = metadata['name_prefix']
+
+    print("DEBUG: Received %s for %s" % (transition, instance_id))
 
     # set instance name
-    name_prefix = metadata['name_prefix']
     set_instance_name(instance_id, "%s%s" % (name_prefix, instance_id[2:]))
 
     # build instance metadata to support parameter interpolation
@@ -67,7 +69,7 @@ def handler(event, context):
         settings = read_config(config_file, instance_metadata)
     except:
         print("FATAL: Error retreiving config from s3")
-        finish(message, instance_metadata, False)
+        finish(message, False)
 
     # Run defined Jenkins job for transition
     code = 200
@@ -94,9 +96,9 @@ def handler(event, context):
 
     # finish the asg lifecycle operation by sending a continue result
     if code == 200:
-        finish(message, instance_metadata, True)
+        finish(message, True)
     else:
-        finish(message, instance_metadata, False)
+        finish(message, False)
 
 
 def set_instance_name(instance_id, name):
