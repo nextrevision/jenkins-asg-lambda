@@ -29,7 +29,8 @@ def finish_continue(message, instance_metadata):
         LifecycleActionResult='CONTINUE',
         InstanceId=instance_metadata['id']
     )
-    print("DEBUG: ASG action complete:\n %s" % response)
+    print("DEBUG: ASG action CONTINUE: [%s]" % response['ResponseMetadata']['HTTPStatusCode'])
+    sys.exit(0)
 
 def finish_abandon(message, instance_metadata):
     response = asg_client.complete_lifecycle_action(
@@ -39,7 +40,8 @@ def finish_abandon(message, instance_metadata):
         LifecycleActionResult='ABANDON',
         InstanceId=instance_metadata['id']
     )
-    print("DEBUG: ASG action ABANDONED:\n %s" % response)
+    print("DEBUG: ASG action ABANDON [%s]" % response['ResponseMetadata']['HTTPStatusCode'])
+    sys.exit(1)
 
 # main entrypoint for lambda function
 def handler(event, context):
