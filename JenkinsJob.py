@@ -192,7 +192,11 @@ def read_config(config_file, instance_metadata):
     # get jenkins settings
     settings['url'] = config.get('jenkins', 'url')
     settings['verify_ssl'] = config.getboolean('jenkins', 'verify_ssl')
-    settings['csrf_enabled'] = config.getboolean('jenkins', 'csrf_enabled')
+
+    try:
+        settings['csrf_enabled'] = config.getboolean('jenkins', 'csrf_enabled')
+    except ConfigParser.NoOptionError:
+        settings['csrf_enabled'] = False
 
     if settings['call_create_job']:
         settings['create_job'] = config.get('jenkins', 'create_job')
