@@ -23,16 +23,16 @@ ec2_resource = boto3.resource('ec2')
 
 # main entrypoint for lambda function
 def handler(event, context):
-    print("DEBUG: Received Event\n%s" % json.dumps(event))
-
     # parse the message and metadata out of the event
     message, metadata = parse_event(event)
-    print("DEBUG: Message\n%s" % json.dumps(message))
-    print("DEBUG: Metadata\n%s" % json.dumps(metadata))
 
     if 'Event' in message.keys() and message['Event'] == TEST_STR:
-        print('DEBUG: Received test string, doing nothing.')
+        print('DEBUG: Ignoring test notification.')
         sys.exit(0)
+
+    print("DEBUG: Received Event\n%s" % json.dumps(event))
+    #print("DEBUG: Message\n%s" % json.dumps(message))
+    #print("DEBUG: Metadata\n%s" % json.dumps(metadata))
 
     transition = message['LifecycleTransition']
     instance_id = message['EC2InstanceId']
@@ -154,7 +154,7 @@ def run_jenkins_job(job, params, token, settings):
                                 verify=settings['verify_ssl'])
         # if we dont get a 2xx response, display the code and dump the response
         if re.match('^2[0-9]{2}$', str(response.status_code)) is None:
-            print("Reponse from crumb was not 2xx: %s" % response.status_code)
+            print("Response from crumb was not 2xx: %s" % response.status_code)
             print(response.text)
             sys.exit(1)
 
@@ -170,7 +170,7 @@ def run_jenkins_job(job, params, token, settings):
                              verify=settings['verify_ssl'])
     # if we dont get a 2xx response, display the code and dump the response
     if re.match('^2[0-9]{2}$', str(response.status_code)) is None:
-        print("Reponse from job %s was not 2xx: %d" % (job, response.status_code))
+        print("Response from job %s was not 2xx: %d" % (job, response.status_code))
         print(response.text)
         sys.exit(1)
 
