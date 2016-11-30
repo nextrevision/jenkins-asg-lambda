@@ -2,6 +2,7 @@ from __future__ import print_function
 from os import path
 
 import json
+import logging
 import re
 import sys
 import ConfigParser
@@ -35,6 +36,8 @@ def finish(message, success=True):
 
 # main entrypoint for lambda function
 def handler(event, context):
+    logging.basicConfig(level=logging.DEBUG)
+
     # parse the message and metadata out of the event
     message, metadata = parse_event(event)
 
@@ -50,7 +53,7 @@ def handler(event, context):
     instance_id = message['EC2InstanceId']
     name_prefix = metadata['name_prefix']
 
-    print("DEBUG: Received %s for %s" % (transition, instance_id))
+    logging.info("DEBUG: Received %s for %s" % (transition, instance_id))
 
     # set instance name
     set_instance_name(instance_id, "%s%s" % (name_prefix, instance_id[2:]))
@@ -71,34 +74,34 @@ def handler(event, context):
         print("FATAL: Error retreiving config from s3")
         finish(message, False)
 
-    # Run defined Jenkins job for transition
-    code = 200
-
     # run on instance launch and when the user has call_create_job set to true
     if transition == LAUNCH_STR and settings['call_create_job']:
         print("DEBUG: Calling create job %s/job/%s" % (settings['url'],
                                                 settings['create_job']))
 
-        code = run_jenkins_job(settings['create_job'],
+        try:
+            run_jenkins_job(settings['create_job'],
                         settings['create_job_params'],
                         settings['create_job_token'],
                         settings)
+        except ValueError:
+            finish(message, False)
 
     # run on instance terminate and when the user has call_terminate_job set
     # to true
     elif transition == TERMINATE_STR and settings['call_terminate_job']:
         print("DEBUG: Calling terminate job %s/job/%s" % (settings['url'],
                                                    settings['terminate_job']))
-        code = run_jenkins_job(settings['terminate_job'],
+        try:
+            run_jenkins_job(settings['terminate_job'],
                         settings['terminate_job_params'],
                         settings['terminate_job_token'],
                         settings)
+        except ValueError:
+            finish(message, False)
 
     # finish the asg lifecycle operation by sending a continue result
-    if code == 200:
-        finish(message, True)
-    else:
-        finish(message, False)
+    finish(message, True)
 
 
 def set_instance_name(instance_id, name):
@@ -173,7 +176,7 @@ def run_jenkins_job(job, params, token, settings):
         if re.match('^2[0-9]{2}$', str(response.status_code)) is None:
             print("Response from crumb was not 2xx: %s" % response.status_code)
             print(response.text)
-            return response.status_code
+            raise ValueError("Response from Jenkins crumb was not 2xx")
 
         crumb = json.loads(response.text)
         headers = {crumb['crumbRequestField']: crumb['crumb']}
@@ -189,8 +192,7 @@ def run_jenkins_job(job, params, token, settings):
     if re.match('^2[0-9]{2}$', str(response.status_code)) is None:
         print("Response from job %s was not 2xx: %d" % (job, response.status_code))
         print(response.text)
-
-    return response.status_code
+        raise ValueError("Response from Jenkins job was not 2xx")
 
 
 # parses a config file and returns a settings object
