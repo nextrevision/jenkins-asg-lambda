@@ -20,6 +20,26 @@ asg_client = boto3.client('autoscaling')
 s3_client = boto3.client('s3')
 ec2_resource = boto3.resource('ec2')
 
+def finish_continue(message, instance_metadata):
+    print("DEBUG: Job queued for execution, finishing ASG action")
+    response = asg_client.complete_lifecycle_action(
+        LifecycleHookName=message['LifecycleHookName'],
+        AutoScalingGroupName=message['AutoScalingGroupName'],
+        LifecycleActionToken=message['LifecycleActionToken'],
+        LifecycleActionResult='CONTINUE',
+        InstanceId=instance_metadata['id']
+    )
+    print("DEBUG: ASG action complete:\n %s" % response)
+
+def finish_abandon(message, instance_metadata):
+    response = asg_client.complete_lifecycle_action(
+        LifecycleHookName=message['LifecycleHookName'],
+        AutoScalingGroupName=message['AutoScalingGroupName'],
+        LifecycleActionToken=message['LifecycleActionToken'],
+        LifecycleActionResult='ABANDON',
+        InstanceId=instance_metadata['id']
+    )
+    print("DEBUG: ASG action ABANDONED:\n %s" % response)
 
 # main entrypoint for lambda function
 def handler(event, context):
@@ -47,11 +67,15 @@ def handler(event, context):
 
     # determine the config file to use from either a local file or one
     # downloaded from an s3 bucket
-    config_file = get_config_file(metadata)
-    print("Reading settings from %s" % config_file)
+    try:
+        config_file = get_config_file(metadata)
+        print("DEBUG: Reading settings from %s" % config_file)
 
-    # load the config file
-    settings = read_config(config_file, instance_metadata)
+        # load the config file
+        settings = read_config(config_file, instance_metadata)
+    except:
+        print("DEBUG: Error retreiving config from s3")
+        finish_abandon(message, instance_metadata)
 
     # run on instance launch and when the user has call_create_job set to true
     if transition == LAUNCH_STR and settings['call_create_job']:
@@ -74,15 +98,7 @@ def handler(event, context):
                         settings)
 
     # finish the asg lifecycle operation by sending a continue result
-    print("Job queued for execution, finishing ASG action")
-    response = asg_client.complete_lifecycle_action(
-        LifecycleHookName=message['LifecycleHookName'],
-        AutoScalingGroupName=message['AutoScalingGroupName'],
-        LifecycleActionToken=message['LifecycleActionToken'],
-        LifecycleActionResult='CONTINUE',
-        InstanceId=instance_metadata['id']
-    )
-    print("ASG action complete:\n %s" % response)
+    finish_continue(message, instance_metadata) 
 
 
 def set_instance_name(instance_id, name):
