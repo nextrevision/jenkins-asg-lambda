@@ -20,28 +20,18 @@ asg_client = boto3.client('autoscaling')
 s3_client = boto3.client('s3')
 ec2_resource = boto3.resource('ec2')
 
-def finish_continue(message, instance_metadata):
-    print("DEBUG: Job queued for execution, finishing ASG action")
-    response = asg_client.complete_lifecycle_action(
-        LifecycleHookName=message['LifecycleHookName'],
-        AutoScalingGroupName=message['AutoScalingGroupName'],
-        LifecycleActionToken=message['LifecycleActionToken'],
-        LifecycleActionResult='CONTINUE',
-        InstanceId=instance_metadata['id']
-    )
-    print("DEBUG: ASG action CONTINUE: [%s]" % response['ResponseMetadata']['HTTPStatusCode'])
-    sys.exit(0)
+def finish(message, instance_metadata, success=True):
+    result = 'CONTINUE' if success else 'ABANDON'
 
-def finish_abandon(message, instance_metadata):
     response = asg_client.complete_lifecycle_action(
         LifecycleHookName=message['LifecycleHookName'],
         AutoScalingGroupName=message['AutoScalingGroupName'],
         LifecycleActionToken=message['LifecycleActionToken'],
-        LifecycleActionResult='ABANDON',
+        LifecycleActionResult=result,
         InstanceId=instance_metadata['id']
     )
-    print("DEBUG: ASG action ABANDON [%s]" % response['ResponseMetadata']['HTTPStatusCode'])
-    sys.exit(1)
+    print("DEBUG: ASG action %s: [%s]" % (result, response['ResponseMetadata']['HTTPStatusCode']))
+    sys.exit(0)
 
 # main entrypoint for lambda function
 def handler(event, context):
@@ -77,14 +67,17 @@ def handler(event, context):
         settings = read_config(config_file, instance_metadata)
     except:
         print("DEBUG: Error retreiving config from s3")
-        finish_abandon(message, instance_metadata)
+        finish(message, instance_metadata, False)
+
+    # Run defined Jenkins job for transition
+    code = 0
 
     # run on instance launch and when the user has call_create_job set to true
     if transition == LAUNCH_STR and settings['call_create_job']:
         print("Calling create job %s/job/%s" % (settings['url'],
                                                 settings['create_job']))
 
-        run_jenkins_job(settings['create_job'],
+        code = run_jenkins_job(settings['create_job'],
                         settings['create_job_params'],
                         settings['create_job_token'],
                         settings)
@@ -94,13 +87,16 @@ def handler(event, context):
     elif transition == TERMINATE_STR and settings['call_terminate_job']:
         print("Calling terminate job %s/job/%s" % (settings['url'],
                                                    settings['terminate_job']))
-        run_jenkins_job(settings['terminate_job'],
+        code = run_jenkins_job(settings['terminate_job'],
                         settings['terminate_job_params'],
                         settings['terminate_job_token'],
                         settings)
 
     # finish the asg lifecycle operation by sending a continue result
-    finish_continue(message, instance_metadata) 
+    if code == 200:
+        finish(message, instance_metadata, True)
+    else:
+        finish(message, instance_metadata, False)
 
 
 def set_instance_name(instance_id, name):
@@ -161,6 +157,7 @@ def run_jenkins_job(job, params, token, settings):
     job_url = "%s/job/%s/buildWithParameters" % (settings['url'], job)
     job_params = "token=%s&%s&cause=Lambda+ASG+Scale" % (token, params)
     auth = (settings['username'], settings['api_key'])
+    headers = {}
 
     if settings['csrf_enabled']:
         # for most jenkins setups, we need a CSRF crumb to subsequently call the
@@ -174,7 +171,7 @@ def run_jenkins_job(job, params, token, settings):
         if re.match('^2[0-9]{2}$', str(response.status_code)) is None:
             print("Response from crumb was not 2xx: %s" % response.status_code)
             print(response.text)
-            sys.exit(1)
+            return response.status_code
 
         crumb = json.loads(response.text)
         headers = {crumb['crumbRequestField']: crumb['crumb']}
@@ -190,7 +187,8 @@ def run_jenkins_job(job, params, token, settings):
     if re.match('^2[0-9]{2}$', str(response.status_code)) is None:
         print("Response from job %s was not 2xx: %d" % (job, response.status_code))
         print(response.text)
-        sys.exit(1)
+
+    return response.status_code
 
 
 # parses a config file and returns a settings object
