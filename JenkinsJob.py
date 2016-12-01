@@ -1,4 +1,6 @@
 from __future__ import print_function
+from os import path
+
 import json
 import re
 import sys
@@ -11,65 +13,111 @@ import requests
 # asg lifecycle actions
 LAUNCH_STR = 'autoscaling:EC2_INSTANCE_LAUNCHING'
 TERMINATE_STR = 'autoscaling:EC2_INSTANCE_TERMINATING'
+TEST_STR = 'autoscaling:TEST_NOTIFICATION'
 
 # aws clients and resources
 asg_client = boto3.client('autoscaling')
 s3_client = boto3.client('s3')
 ec2_resource = boto3.resource('ec2')
 
+def finish(message, instance_metadata, success=True):
+    result = 'CONTINUE' if success else 'ABANDON'
 
-# main entrypoint for lambda function
-def handler(event, context):
-    print("DEBUG: Received Event\n%s" % json.dumps(event))
-
-    # parse the message and metadata out of the event
-    message, metadata = parse_event(event)
-    print("DEBUG: Message\n%s" % json.dumps(message))
-    print("DEBUG: Metadata\n%s" % json.dumps(metadata))
-    transition = message['LifecycleTransition']
-
-    # build instance metadata to support parameter interpolation
-    instance_metadata = get_instance_metadata(message['EC2InstanceId'])
-    print("DEBUG: Instance Information\n%s" % json.dumps(instance_metadata))
-
-    # determine the config file to use from either a local file or one
-    # downloaded from an s3 bucket
-    config_file = get_config_file(metadata)
-    print("Reading settings from %s" % config_file)
-
-    # load the config file
-    settings = read_config(config_file, instance_metadata)
-
-    # run on instance launch and when the user has call_create_job set to true
-    if transition == LAUNCH_STR and settings['call_create_job']:
-        print("Calling create job %s/job/%s" % (settings['url'],
-                                                settings['create_job']))
-
-        run_jenkins_job(settings['create_job'],
-                        settings['create_job_params'],
-                        settings['create_job_token'],
-                        settings)
-
-    # run on instance terminate and when the user has call_terminate_job set
-    # to true
-    elif transition == TERMINATE_STR and settings['call_terminate_job']:
-        print("Calling terminate job %s/job/%s" % (settings['url'],
-                                                   settings['terminate_job']))
-        run_jenkins_job(settings['terminate_job'],
-                        settings['terminate_job_params'],
-                        settings['terminate_job_token'],
-                        settings)
-
-    # finish the asg lifecycle operation by sending a continue result
-    print("Job queued for execution, finishing ASG action")
     response = asg_client.complete_lifecycle_action(
         LifecycleHookName=message['LifecycleHookName'],
         AutoScalingGroupName=message['AutoScalingGroupName'],
         LifecycleActionToken=message['LifecycleActionToken'],
-        LifecycleActionResult='CONTINUE',
+        LifecycleActionResult=result,
         InstanceId=instance_metadata['id']
     )
-    print("ASG action complete:\n %s" % response)
+    print("[DEBUG] ASG action %s: [%s]" % (result, response['ResponseMetadata']['HTTPStatusCode']))
+    sys.exit(0)
+
+# main entrypoint for lambda function
+def handler(event, context):
+    # parse the message and metadata out of the event
+    message, metadata = parse_event(event)
+
+    if 'Event' in message.keys() and message['Event'] == TEST_STR:
+        print("[DEBUG] Ignoring test notification.")
+        sys.exit(0)
+
+    #print("DEBUG: Received Event\n%s" % json.dumps(event))
+    #print("DEBUG: Message\n%s" % json.dumps(message))
+    #print("DEBUG: Metadata\n%s" % json.dumps(metadata))
+
+    transition = message['LifecycleTransition']
+    instance_id = message['EC2InstanceId']
+    name_prefix = metadata['name_prefix']
+
+    print("[DEBUG] Received %s for %s" % (transition, instance_id))
+
+    # build instance metadata to support parameter interpolation
+    instance_metadata = get_instance_metadata(instance_id)
+    print("[DEBUG] Instance Information\n%s" % json.dumps(instance_metadata))
+
+    # Below this line we are calling external resources.
+    # All function calls should be wrapped in try/except to trigger ABANDON
+    # If no errors are encountered, we CONTINUE
+
+    # Update EC2 Instance Name Tag based on Prefix and Instance-Id
+    try:
+        set_instance_name(instance_id, "%s%s" % (name_prefix, instance_id[2:]))
+    except ValueError:
+        finish(message, instance_metadata, False)
+
+    # determine the config file to use from either a local file or one
+    # downloaded from an s3 bucket
+    try:
+        config_file = get_config_file(metadata)
+        print("[DEBUG] Reading settings from %s" % config_file)
+
+        # load the config file
+        settings = read_config(config_file, instance_metadata)
+    except:
+        e = sys.exc_info()[0]
+        print("[FATAL] Error retreiving config from s3: %s" % e)
+        finish(message, instance_metadata, False)
+
+    # run on instance launch and when the user has call_create_job set to true
+    if transition == LAUNCH_STR and settings['call_create_job']:
+        print("[DEBUG] Calling create job %s/job/%s" % (settings['url'],
+                                                        settings['create_job']))
+
+        try:
+            run_jenkins_job(settings['create_job'],
+                            settings['create_job_params'],
+                            settings['create_job_token'],
+                            settings)
+        except ValueError:
+            finish(message, instance_metadata, False)
+
+    # run on instance terminate and when the user has call_terminate_job set
+    # to true
+    elif transition == TERMINATE_STR and settings['call_terminate_job']:
+        print("[DEBUG] Calling terminate job %s/job/%s" % (settings['url'],
+                                                           settings['terminate_job']))
+        try:
+            run_jenkins_job(settings['terminate_job'],
+                            settings['terminate_job_params'],
+                            settings['terminate_job_token'],
+                            settings)
+        except ValueError:
+            finish(message, instance_metadata, False)
+
+    # finish the asg lifecycle operation by sending a continue result
+    finish(message, instance_metadata, True)
+
+
+def set_instance_name(instance_id, name):
+    ec2 = boto3.client('ec2')
+    tag = {'Key': 'Name', 'Value': name}
+    response = ec2.create_tags(Resources=[instance_id], Tags=[tag])
+    status_code = response['ResponseMetadata']['HTTPStatusCode']
+    if status_code != 200:
+        print("[DEBUG] Reponse from ec2 name update: %s" % status_code)
+        print(json.dumps(response))
+        raise ValueError("Response from Instance Name Update was not 2xx")
 
 
 # returns the message and metadata from an event object
@@ -87,6 +135,7 @@ def get_instance_metadata(instance_id):
 
     metadata = {
         "id": instance.instance_id,
+        "hostname": instance.private_dns_name.split('.')[0],
         "private_hostname": instance.private_dns_name,
         "private_ip": instance.private_ip_address,
         "public_hostname": instance.public_dns_name,
@@ -105,7 +154,8 @@ def get_instance_metadata(instance_id):
 def get_config_file(metadata):
     config_file = 'config.ini'
     if 's3_config_file' in metadata.keys():
-        config_file = "/tmp/%s" % metadata['s3_config_file']
+        config_base_name = path.basename(metadata['s3_config_file'])
+        config_file = "/tmp/%s" % config_base_name
         s3_client.download_file(metadata['s3_bucket'],
                                 metadata['s3_config_file'],
                                 config_file)
@@ -117,22 +167,24 @@ def run_jenkins_job(job, params, token, settings):
     job_url = "%s/job/%s/buildWithParameters" % (settings['url'], job)
     job_params = "token=%s&%s&cause=Lambda+ASG+Scale" % (token, params)
     auth = (settings['username'], settings['api_key'])
+    headers = {}
 
-    # for most jenkins setups, we need a CSRF crumb to subsequently call the
-    # jenkins api to trigger a job
-    print("DEBUG: Getting CSRF crumb")
-    response = requests.get("%s/crumbIssuer/api/json" % settings['url'],
-                            auth=auth,
-                            timeout=5,
-                            verify=settings['verify_ssl'])
-    # if we dont get a 2xx response, display the code and dump the response
-    if re.match('^2[0-9]{2}$', str(response.status_code)) is None:
-        print("Reponse from crumb was not 2xx: %s" % response.status_code)
-        print(response.text)
-        sys.exit(1)
+    if settings['csrf_enabled']:
+        # for most jenkins setups, we need a CSRF crumb to subsequently call the
+        # jenkins api to trigger a job
+        print("DEBUG: Getting CSRF crumb")
+        response = requests.get("%s/crumbIssuer/api/json" % settings['url'],
+                                auth=auth,
+                                timeout=5,
+                                verify=settings['verify_ssl'])
+        # if we dont get a 2xx response, display the code and dump the response
+        if re.match('^2[0-9]{2}$', str(response.status_code)) is None:
+            print("Response from crumb was not 2xx: %s" % response.status_code)
+            print(response.text)
+            raise ValueError("Response from Jenkins crumb was not 2xx")
 
-    crumb = json.loads(response.text)
-    headers = {crumb['crumbRequestField']: crumb['crumb']}
+        crumb = json.loads(response.text)
+        headers = {crumb['crumbRequestField']: crumb['crumb']}
 
     # call the jenkins job api with the supplied parameters
     response = requests.post("%s?%s" % (job_url, job_params),
@@ -143,9 +195,9 @@ def run_jenkins_job(job, params, token, settings):
                              verify=settings['verify_ssl'])
     # if we dont get a 2xx response, display the code and dump the response
     if re.match('^2[0-9]{2}$', str(response.status_code)) is None:
-        print("Reponse from job was not 2xx: %s" % (job, response.status_code))
+        print("Response from job %s was not 2xx: %d" % (job, response.status_code))
         print(response.text)
-        sys.exit(1)
+        raise ValueError("Response from Jenkins job was not 2xx")
 
 
 # parses a config file and returns a settings object
@@ -165,6 +217,11 @@ def read_config(config_file, instance_metadata):
     # get jenkins settings
     settings['url'] = config.get('jenkins', 'url')
     settings['verify_ssl'] = config.getboolean('jenkins', 'verify_ssl')
+
+    try:
+        settings['csrf_enabled'] = config.getboolean('jenkins', 'csrf_enabled')
+    except ConfigParser.NoOptionError:
+        settings['csrf_enabled'] = False
 
     if settings['call_create_job']:
         settings['create_job'] = config.get('jenkins', 'create_job')
