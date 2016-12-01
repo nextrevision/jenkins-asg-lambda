@@ -20,7 +20,7 @@ asg_client = boto3.client('autoscaling')
 s3_client = boto3.client('s3')
 ec2_resource = boto3.resource('ec2')
 
-def finish(message, success=True):
+def finish(message, instance_metadata, success=True):
     result = 'CONTINUE' if success else 'ABANDON'
 
     response = asg_client.complete_lifecycle_action(
@@ -28,7 +28,7 @@ def finish(message, success=True):
         AutoScalingGroupName=message['AutoScalingGroupName'],
         LifecycleActionToken=message['LifecycleActionToken'],
         LifecycleActionResult=result,
-        InstanceId=message['EC2InstanceId']
+        InstanceId=instance_metadata['id']
     )
     print("[DEBUG] ASG action %s: [%s]" % (result, response['ResponseMetadata']['HTTPStatusCode']))
     sys.exit(0)
@@ -64,7 +64,7 @@ def handler(event, context):
     try:
         set_instance_name(instance_id, "%s%s" % (name_prefix, instance_id[2:]))
     except ValueError:
-        finish(message, False)
+        finish(message, instance_metadata, False)
 
     # determine the config file to use from either a local file or one
     # downloaded from an s3 bucket
@@ -77,7 +77,7 @@ def handler(event, context):
     except:
         e = sys.exc_info()[0]
         print("[FATAL] Error retreiving config from s3: %s" % e)
-        finish(message, False)
+        finish(message, instance_metadata, False)
 
     # run on instance launch and when the user has call_create_job set to true
     if transition == LAUNCH_STR and settings['call_create_job']:
@@ -90,7 +90,7 @@ def handler(event, context):
                             settings['create_job_token'],
                             settings)
         except ValueError:
-            finish(message, False)
+            finish(message, instance_metadata, False)
 
     # run on instance terminate and when the user has call_terminate_job set
     # to true
@@ -103,10 +103,10 @@ def handler(event, context):
                             settings['terminate_job_token'],
                             settings)
         except ValueError:
-            finish(message, False)
+            finish(message, instance_metadata, False)
 
     # finish the asg lifecycle operation by sending a continue result
-    finish(message, True)
+    finish(message, instance_metadata, True)
 
 
 def set_instance_name(instance_id, name):
